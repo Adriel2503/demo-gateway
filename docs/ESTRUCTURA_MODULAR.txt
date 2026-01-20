@@ -1,0 +1,306 @@
+================================================================================
+ESTRUCTURA MODULAR DEL WHATSAPP GATEWAY - ENVÍO DE MENSAJES
+================================================================================
+
+FLUJO DE REQUEST A RESPONSE
+================================================================================
+
+  Client (Agent Service, Browser, etc)
+              |
+              | POST /send {payload}
+              v
+        main.py::send_message()
+              |
+              +-- Instancia SendWhatsAppService
+              |
+              v
+    send_service.py::process()
+              |
+              +-- Valida con SendPayload.validate()
+              |       |
+              |       v
+              |   message_types.py::SendPayload
+              |
+              +-- Extrae datos
+              |
+              +-- Formatea número telefónico
+              |       |
+              |       v
+              |   formatters.py::format_phone_number()
+              |
+              +-- Selecciona tipo (text, image, etc)
+              |
+              +-- Envía según tipo
+              |       |
+              |       v
+              |   meta_client.py::MetaWhatsAppClient
+              |       - send_text()
+              |       - send_image()
+              |       - send_document()
+              |       - send_audio()
+              |       - send_video()
+              |
+              +-- Procesa respuesta de Meta
+              |       |
+              |       v
+              |   formatters.py::format_response_*()
+              |
+              v
+    Response estructurada {success, message, data}
+              |
+              v
+          Client
+
+================================================================================
+MÓDULOS Y RESPONSABILIDADES
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ main.py (FastAPI Application)                        ~100 líneas       │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Responsabilidades:                                                      │
+│   • Exponer endpoints HTTP                                             │
+│   • Manejar requests/responses                                         │
+│   • CORS middleware                                                    │
+│   • Logging de alto nivel                                             │
+│                                                                         │
+│ Endpoints:                                                              │
+│   ✓ GET /health           - Health check                              │
+│   ✓ GET /webhook          - Verificación Meta                         │
+│   ✓ POST /webhook         - Recibir mensajes                          │
+│   ✓ POST /send            - Enviar mensajes (NUEVO)                   │
+│   ✓ OPTIONS /webhook      - CORS preflight                            │
+│   ✓ OPTIONS /send         - CORS preflight (NUEVO)                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ send_service.py (Orquestador Principal)            ~200 líneas         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Clase: SendWhatsAppService                                             │
+│                                                                         │
+│ Responsabilidades:                                                      │
+│   • Orquestar flujo completo de envío                                  │
+│   • Coordinar validación, formateo, envío                              │
+│   • Procesar respuesta de Meta                                         │
+│   • Retornar respuesta estructurada                                    │
+│                                                                         │
+│ Método público:                                                         │
+│   async process(payload: Dict) -> Dict                                 │
+│                                                                         │
+│ Métodos privados:                                                       │
+│   _validate_payload()     - Valida usando SendPayload                  │
+│   _send_by_type()         - Envía según tipo con MetaClient            │
+│   _process_meta_response() - Procesa respuesta Meta                    │
+│                                                                         │
+│ Independencia:                                                          │
+│   • No depende de FastAPI                                              │
+│   • Puede usarse en CLI, workers, tests, etc.                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ message_types.py (Validación de Tipos)             ~180 líneas         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Enum: MessageType                                                       │
+│   - TEXT = 'text'                                                       │
+│   - IMAGE = 'image'                                                     │
+│   - DOCUMENT = 'document'                                               │
+│   - AUDIO = 'audio'                                                     │
+│   - VIDEO = 'video'                                                     │
+│                                                                         │
+│ Clase: SendPayload                                                      │
+│   Valida payload según tipo de mensaje                                 │
+│                                                                         │
+│ Validaciones:                                                           │
+│   TEXT:      Requiere 'message'                                        │
+│   IMAGE:     Requiere 'image_url'                                      │
+│   DOCUMENT:  Requiere 'document_url' y 'filename'                      │
+│   AUDIO:     Requiere 'audio_url'                                      │
+│   VIDEO:     Requiere 'video_url'                                      │
+│                                                                         │
+│ Getters especializados:                                                 │
+│   get_type()            - Tipo normalizado                             │
+│   get_phone()           - Número destino                               │
+│   get_phone_number_id() - ID del que envía                             │
+│   get_message()         - Mensaje/caption                              │
+│   get_image_url()       - URL imagen                                   │
+│   get_document_url()    - URL documento                                │
+│   get_document_filename() - Nombre documento                           │
+│   get_audio_url()       - URL audio                                    │
+│   get_video_url()       - URL video                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ meta_client.py (Cliente HTTP a Meta)               ~250 líneas         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Clase: MetaWhatsAppClient                                              │
+│                                                                         │
+│ Responsabilidades:                                                      │
+│   • Construir payloads para cada tipo de mensaje                       │
+│   • Hacer requests HTTP async a Meta                                   │
+│   • Manejo robusto de errores                                          │
+│   • Logging detallado                                                  │
+│                                                                         │
+│ Métodos async (público):                                               │
+│   send_text()        - Envía texto                                     │
+│   send_image()       - Envía imagen (con caption opcional)             │
+│   send_document()    - Envía documento (con filename y caption)        │
+│   send_audio()       - Envía audio                                     │
+│   send_video()       - Envía video (con caption opcional)              │
+│                                                                         │
+│ Método privado:                                                         │
+│   _send_request()    - Request HTTP base (POST a Meta)                 │
+│                                                                         │
+│ Independencia:                                                          │
+│   • Agnóstico del framework web                                        │
+│   • Reutilizable en otros proyectos                                    │
+│   • Usa httpx async                                                    │
+│   • Timeout configurable (60s)                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ formatters.py (Utilidades de Formateo)             ~120 líneas         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Responsabilidades:                                                      │
+│   • Formatear números telefónicos                                      │
+│   • Estructurar respuestas exitosas                                    │
+│   • Estructurar respuestas de error                                    │
+│                                                                         │
+│ Funciones:                                                              │
+│   format_phone_number()    - Normaliza números (agregar código país)   │
+│   format_response_success() - Estructura respuesta OK                   │
+│   format_response_error()   - Estructura respuesta error                │
+│                                                                         │
+│ Logica de format_phone_number():                                        │
+│   1. Elimina espacios, guiones, paréntesis, +                          │
+│   2. Si empieza con 0, lo quita (formato peruano)                      │
+│   3. Si no tiene código de país, agrega '51' (Perú)                    │
+│                                                                         │
+│ Ejemplos:                                                               │
+│   '980253258'          → '51980253258'                                 │
+│   '+51 9 8025 3258'    → '51980253258'                                 │
+│   '09 8025 3258'       → '51980253258'                                 │
+│                                                                         │
+│ Independencia:                                                          │
+│   • Agnóstico del dominio (solo formatos)                              │
+│   • Reutilizable en cualquier contexto                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+VENTAJAS DE ESTA ARQUITECTURA
+================================================================================
+
+✓ SEPARACIÓN DE RESPONSABILIDADES
+  - Cada módulo tiene un propósito claro
+  - Fácil de entender y mantener
+  - Cambios localizados
+
+✓ REUTILIZABLE
+  - meta_client.py puede usarse en otros proyectos
+  - formatters.py es agnóstico del dominio
+  - message_types.py es independiente de FastAPI
+  - send_service.py puede usarse en CLI, workers, etc.
+
+✓ TESTEABLE
+  - Cada módulo puede testearse aisladamente
+  - Mocks fáciles de crear
+  - No hay dependencias circulares
+
+✓ ESCALABLE
+  - Agregar nuevo tipo de mensaje = 5 cambios simples
+  - Cambiar API de Meta = cambios solo en meta_client.py
+  - Agregar queue (Redis) = cambios solo en main.py
+
+✓ DOCUMENTADO
+  - Cada función tiene docstring
+  - Type hints completos
+  - Ejemplos de uso incluidos
+
+✓ NO SATURADO
+  - main.py: 100 líneas (clean and focused)
+  - Cada módulo: 120-250 líneas (mantenible)
+  - Total: ~1000 líneas bien organizadas
+
+================================================================================
+EJEMPLO: AGREGAR NUEVO TIPO DE MENSAJE (Location)
+================================================================================
+
+1. Agregar enum a message_types.py:
+   class MessageType(str, Enum):
+       LOCATION = 'location'
+
+2. Agregar validación a SendPayload:
+   def _validate_location(self) -> bool:
+       if not self.get('latitude') or not self.get('longitude'):
+           self.errors.append('Requerido: latitude, longitude')
+           return False
+       return True
+
+3. Agregar getter a SendPayload:
+   def get_location(self) -> tuple:
+       return (self.get('latitude'), self.get('longitude'))
+
+4. Agregar método a MetaWhatsAppClient:
+   async def send_location(self, phone_number_id, to, lat, lon, name=None):
+       payload = {
+           'messaging_product': 'whatsapp',
+           'to': to,
+           'type': 'location',
+           'location': {'latitude': lat, 'longitude': lon, 'name': name}
+       }
+       return await self._send_request(phone_number_id, payload)
+
+5. Agregar caso a SendWhatsAppService._send_by_type():
+   elif message_type == MessageType.LOCATION:
+       lat, lon = send_payload.get_location()
+       return await self.meta_client.send_location(...)
+
+6. Listo! Sin modificar main.py
+
+================================================================================
+ARCHIVOS CREADOS
+================================================================================
+
+MÓDULOS:
+  formatters.py                  - Utilidades de formateo
+  message_types.py               - Validación de tipos
+  meta_client.py                 - Cliente HTTP a Meta
+  send_service.py                - Orquestador principal
+
+DOCUMENTACIÓN:
+  ARQUITECTURA_MODULAR.md        - Documentación técnica detallada
+  INTEGRACION_SEND.md            - Guía de integración
+  ESTRUCTURA_MODULAR.txt         - Este archivo
+  example_send_requests.py       - Ejemplos de uso
+
+MODIFICADOS:
+  main.py                        - Agregado endpoint /send y import
+
+================================================================================
+PRUEBAS RÁPIDAS
+================================================================================
+
+1. Health check:
+   curl http://localhost:8000/health
+
+2. Enviar texto:
+   curl -X POST http://localhost:8000/send \
+     -H "Content-Type: application/json" \
+     -d '{
+       "phone_number_id": "122110111111111",
+       "phone": "51980253258",
+       "type": "text",
+       "message": "Hola"
+     }'
+
+3. Enviar imagen:
+   curl -X POST http://localhost:8000/send \
+     -H "Content-Type: application/json" \
+     -d '{
+       "phone_number_id": "122110111111111",
+       "phone": "51980253258",
+       "type": "image",
+       "image_url": "https://ejemplo.com/img.jpg",
+       "message": "Caption"
+     }'
+
+================================================================================

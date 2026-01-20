@@ -1,0 +1,65 @@
+# =============================================================================
+# WhatsApp Gateway - Docker Compose
+# Configuracion para desarrollo y produccion
+# =============================================================================
+
+services:
+  whatsapp-gateway:
+    build:
+      context: ./whatsapp_gateway
+      dockerfile: Dockerfile
+    
+    container_name: whatsapp-gateway
+    
+    image: whatsapp-gateway:latest
+    
+    ports:
+      - "8000:8000"
+    
+    # Variables de entorno desde .env (NO hardcodeadas)
+    environment:
+      VERIFY_TOKEN: ${VERIFY_TOKEN}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN}
+      APP_SECRET: ${APP_SECRET}
+      AGENT_SERVICE_URL: ${AGENT_SERVICE_URL}
+      PORT: ${PORT:-8000}
+      HOST: ${HOST:-0.0.0.0}
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Reinicio automatico
+    restart: unless-stopped
+    
+    # Limites de recursos
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: "512M"
+        reservations:
+          cpus: "0.25"
+          memory: "128M"
+    
+    # Logging con rotacion
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Red personalizada
+    networks:
+      - gateway-network
+
+# =============================================================================
+# Redes
+# =============================================================================
+networks:
+  gateway-network:
+    driver: bridge
