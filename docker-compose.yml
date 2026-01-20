@@ -6,7 +6,7 @@
 services:
   whatsapp-gateway:
     build:
-      context: ./whatsapp_gateway
+      context: .
       dockerfile: Dockerfile
     
     container_name: whatsapp-gateway
@@ -16,7 +16,11 @@ services:
     ports:
       - "8000:8000"
     
-    # Variables de entorno desde .env (NO hardcodeadas)
+    # Cargar variables desde archivo .env
+    env_file:
+      - .env
+    
+    # Variables de entorno (con fallbacks)
     environment:
       VERIFY_TOKEN: ${VERIFY_TOKEN}
       WHATSAPP_TOKEN: ${WHATSAPP_TOKEN}
